@@ -1,0 +1,597 @@
+---
+title: "Everyday LA: Seminar (24.03.2017)"
+output: 
+  flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(gsheet)
+library(tidyr)
+suppressMessages(library(dplyr))
+library(data.table)
+library(rvest)
+library(ggplot2)
+library(ineq)
+library(syuzhet)
+library(tm)
+library(wordcloud)
+library(SnowballC)
+library(stringi)
+library(stringr)
+
+
+URL_Q0 <- 'https://docs.google.com/spreadsheets/d/1nT1CxmGS8teptg_ysN1H3P2wP-gMEMbVCtyT63wbNp8/edit'
+URL_Q1 <- 'https://docs.google.com/spreadsheets/d/1gjBXrg0awSbWhF0GGriHVvepBrf7tGFZ-rDJwDsMqvU/edit'
+URL_Q2 <- 'https://docs.google.com/spreadsheets/d/1HDv5s8ZBcQ1U7VM3uAd1Y1hnNt3WmGwujWC-eZRQ1YE/edit'
+URL_Q3 <- 'https://docs.google.com/spreadsheets/d/1UvFTgvwz664FG7cc0V2gsgjJZG7bA37dgnim11PFQOg/edit'
+URL_Q4 <- 'https://docs.google.com/spreadsheets/d/1kiEJJtYy_Tv5GxX32n64WcSUxjsyre4MhV6r3TaAyf4/edit'
+
+
+# Define the data gathering function here? possibly using
+# http://shiny.rstudio.com/reference/shiny/latest/reactivePoll.html
+# http://shiny.rstudio.com/gallery/reactive-poll-and-file-reader.html
+
+pollSpreadsheet <- function(url, namesCol=NULL, factors=NULL){
+  data <- reactivePoll(5000, session,
+                     readLastTimestamp <- function(){
+                        # We read the latest response timestamp
+                        data <- as.data.frame(gsheet2tbl(url))
+                        if(nrow(data)>0 & ncol(data)>1){
+                          data[nrow(data),1]
+                        }else{
+                          ""
+                        }
+                      },
+                     readValue <- function(){
+                        data <- as.data.frame(gsheet2tbl(url))
+                        #We clean it up a bit
+                        if(!is.null(namesCol) & length(namesCol)>0){
+                          names(data) <- namesCol 
+                        }
+                        if(!is.null(factors) & length(factors)>0){
+                          for(f in factors){
+                            data[,f] <- as.factor(data[,f])
+                          }  
+                        }
+                        data
+                      })
+  data
+}
+
+
+Q0Data <- pollSpreadsheet(URL_Q0, 
+                          c("Timestamp","Checkboxes","Name"))
+
+Q0D <- reactive({
+  data <- Q0Data()
+  data
+})
+
+Q1Data <- pollSpreadsheet(URL_Q1, 
+                          c("Timestamp","Definition.Pre"))
+
+Q1D <- reactive({
+  data <- Q1Data()
+  data
+})
+
+Q2Data <- pollSpreadsheet(URL_Q2, 
+                          c("Timestamp","Usefulness","Explain.Usefulness","Frequency","Coverage","Explain.Coverage","Time.Spent","Completeness"))
+
+Q2D <- reactive({
+  data <- Q2Data()
+  data
+})
+
+Q3Data <- pollSpreadsheet(URL_Q3, 
+                          c("Timestamp","Sources.Ideal","Sources.Pragmatic"))
+
+Q3D <- reactive({
+  data <- Q3Data()
+  data
+})
+
+Q4Data <- pollSpreadsheet(URL_Q4, 
+                          c("Timestamp","Costs","Benefits","Appraisal","Explain.Appraisal","Comment","Definition.Post"))
+
+Q4D <- reactive({
+  data <- Q4Data()
+  data
+})
+
+
+convertFactor <- function(values){
+  print(values)
+  if(!is.null(values) & length(values)>0){
+    newvals = numeric()
+    for(val in values){
+      if(grepl(as.character(val),"Strongly agree",fixed = T)){
+        newval = 5
+      }else if(grepl(as.character(val),"Agree",fixed = T)){
+        newval = 4
+      }else if(grepl(as.character(val),"Neither agree nor disagree",fixed = T)){
+        newval = 3
+      }else if(grepl(as.character(val),"Disagree",fixed = T)){
+        newval = 2
+      }else if(grepl(as.character(val),"Strongly disagree",fixed = T)){
+        newval = 1
+      }else if(grepl(as.character(val),"Not Applicable",fixed = T)){
+        newval = NA
+      }
+      newvals <- c(newvals, newval)
+    }
+    print(newvals)
+    newvals
+  }else{
+    values
+  }
+}
+
+
+
+      count_words <- function(s){
+        #count <- as.numeric(stri_stats_latex(s)['Words'])
+        count <- vapply(strsplit(s, "\\W+"), length, integer(1))
+        count
+      }
+
+  clean_vector <- function(v){
+    newv <- v[v!=""]
+    newv2 <- newv[length(newv)>1]
+    newv2
+  }
+      
+      
+integer_breaks <- function(x)
+  seq(floor(min(x)), ceiling(max(x)))
+      
+#sessions <- read.csv(file = "Sessions.csv", encoding="UTF-8", stringsAsFactors=FALSE)
+
+```
+
+
+Learn LA
+=====================================  
+
+
+    
+Column 1 
+-------------------------------------
+
+### Pretest: definition words (avg)
+
+```{r}
+
+renderValueBox({
+              data <- Q1D()
+              message="0"
+              if(nrow(data)>0){
+                defs <- paste(data$Definition.Pre, sep = "\n")
+                lines <- clean_vector(unlist(string.break.line(defs)))
+                wc <- sum(sapply(defs,FUN = count_words))
+                message <- wc/nrow(data)
+                
+              }
+              valueBox(
+                value=message,
+                icon = "fa-microphone",
+                color="primary")
+                })
+
+```   
+
+### Pretest: definitions (WordCloud)
+
+
+```{r}
+
+renderPlot({
+  data <- Q1D()
+
+  d <- unlist(string.break.line(paste(data$Definition.Pre,sep="\n")))
+  
+  d <- clean_vector(d)
+  
+  if(length(d)>0){
+    corpus <- Corpus(VectorSource(d))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, tolower)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+    corpus <- tm_map(corpus, stemDocument)
+    corpus <- tm_map(corpus, PlainTextDocument)
+    wordcloud(corpus, max.words=100, random.order=F)
+  }
+})
+
+```   
+
+### Pretest: definitions (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q1D()
+  if(nrow(data)>0){
+    
+    data.frame(Definition=data$Definition.Pre)
+  }
+
+})
+```
+
+
+
+    
+Column 2 
+-------------------------------------
+
+### Posttest: definition words (avg)
+
+```{r}
+
+renderValueBox({
+              data <- Q4D()
+              message="0"
+              if(nrow(data)>0){
+                defs <- paste(data$Definition.Post, sep = "\n")
+                lines <- clean_vector(unlist(string.break.line(defs)))
+                wc <- sum(sapply(defs,FUN = count_words))
+                message <- wc/nrow(data)
+                
+              }
+              valueBox(
+                value=message,
+                icon = "fa-microphone",
+                color="success")
+                })
+
+```   
+
+### Posttest: definitions (WordCloud)
+
+
+```{r}
+
+renderPlot({
+  data <- Q4D()
+
+  d <- unlist(string.break.line(paste(data$Definition.Post,sep="\n")))
+  
+  d <- clean_vector(d)
+  
+  if(length(d)>0){
+    corpus <- Corpus(VectorSource(d))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, tolower)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+    corpus <- tm_map(corpus, stemDocument)
+    corpus <- tm_map(corpus, PlainTextDocument)
+    wordcloud(corpus, max.words=100, random.order=F)
+  }
+})
+
+```   
+
+### Posttest: definitions (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q4D()
+  if(nrow(data)>0){
+    
+    data.frame(Definition=data$Definition.Post)
+  }
+
+})
+```
+
+
+    
+Column 3 
+-------------------------------------
+
+### Ideal data sources (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q3D()
+  if(nrow(data)>0){
+    
+    data.frame(Definition=data$Sources.Ideal)
+  }
+
+})
+```
+
+
+### Pragmatic data sources (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q3D()
+  if(nrow(data)>0){
+    
+    data.frame(Definition=data$Sources.Pragmatic)
+  }
+
+})
+```
+
+
+
+Enactment support
+=====================================  
+
+    
+Column 1
+-------------------------------------
+
+### Time spent so far (Hours)
+
+```{r}
+
+renderPlot({
+  data <- Q2D()
+  
+  if(nrow(data)>0){
+    ggplot(data, aes(x=Time.Spent))+geom_density(alpha=0.2, fill="green")+theme_bw()+xlim(0,10)+geom_vline(xintercept = mean(data$Time.Spent))
+  }
+})
+```
+
+### Completeness
+
+```{r}
+
+renderPlot({
+  data <- Q2D()
+  
+  if(nrow(data)>0){
+    ggplot(data, aes(x=Completeness))+geom_density(alpha=0.2, fill="green")+theme_bw()+xlim(0,10)+geom_vline(xintercept = mean(data$Completeness))
+  }
+})
+```
+
+
+Confidence in Practice
+=====================================  
+
+    
+Column 1
+-------------------------------------
+
+### Frequency
+
+```{r}
+
+renderPlot({
+   data <- Q2D()
+    ind <- data[,"Frequency"]
+    if(length(ind)>0){
+      df <- data.frame(Responses=as.factor(ind))
+      if(nrow(df)>0){
+        
+        levels(df$Responses) <- gsub(" ", "\n", levels(df$Responses))
+        ggplot(df, aes(x=Responses, fill=Responses)) +
+  geom_bar(stat="count") +
+  scale_y_continuous(breaks=integer_breaks) +
+  guides(fill=FALSE) +
+  theme_bw() + scale_fill_brewer(palette="Set1") + theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"))
+      }  
+    }
+})
+```
+
+
+### Coverage
+
+```{r}
+
+renderPlot({
+  data <- Q2D()
+  
+  if(nrow(data)>0){
+    ggplot(data, aes(x=Coverage))+geom_density(alpha=0.2, fill="green")+theme_bw()+xlim(0,10)+geom_vline(xintercept = mean(data$Coverage))
+  }
+})
+```
+
+
+### Coverage explanations (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q2D()
+  if(nrow(data)>0){
+    
+    data.frame(Reason=data$Explain.Coverage)
+  }
+
+})
+```
+
+
+
+    
+Column 2
+-------------------------------------
+
+
+### Costs (WordCloud)
+
+
+```{r}
+
+renderPlot({
+  data <- Q4D()
+
+  d <- unlist(string.break.line(paste(data$Costs,sep="\n")))
+  
+  d <- clean_vector(d)
+  
+  if(length(d)>0){
+    corpus <- Corpus(VectorSource(d))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, tolower)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+    corpus <- tm_map(corpus, stemDocument)
+    corpus <- tm_map(corpus, PlainTextDocument)
+    wordcloud(corpus, max.words=100, random.order=F)
+  }
+})
+
+```   
+
+### Costs (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q4D()
+  if(nrow(data)>0){
+    
+    data.frame(Costs=data$Costs)
+  }
+
+})
+```
+
+ 
+Column 3
+-------------------------------------
+
+
+### Benefits (WordCloud)
+
+
+```{r}
+
+renderPlot({
+  data <- Q4D()
+
+  d <- unlist(string.break.line(paste(data$Benefits,sep="\n")))
+  
+  d <- clean_vector(d)
+  
+  if(length(d)>0){
+    corpus <- Corpus(VectorSource(d))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, tolower)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+    corpus <- tm_map(corpus, stemDocument)
+    corpus <- tm_map(corpus, PlainTextDocument)
+    wordcloud(corpus, max.words=100, random.order=F)
+  }
+})
+
+```   
+
+### Benefits (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q4D()
+  if(nrow(data)>0){
+    
+    data.frame(Benefits=data$Benefits)
+  }
+
+})
+```
+
+ 
+Column 3
+-------------------------------------
+
+### Appraisal
+
+```{r}
+
+renderPlot({
+  data <- Q4D()
+  
+  if(nrow(data)>0){
+    ggplot(data, aes(x=Appraisal))+geom_density(alpha=0.2, fill="green")+theme_bw()+xlim(0,10)+geom_vline(xintercept = mean(data$Appraisal))
+  }
+})
+```
+
+### Appraisal (WordCloud)
+
+
+```{r}
+
+renderPlot({
+  data <- Q4D()
+
+  d <- unlist(string.break.line(paste(data$Explain.Appraisal,sep="\n")))
+  
+  d <- clean_vector(d)
+  
+  if(length(d)>0){
+    corpus <- Corpus(VectorSource(d))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, tolower)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+    corpus <- tm_map(corpus, stemDocument)
+    corpus <- tm_map(corpus, PlainTextDocument)
+    wordcloud(corpus, max.words=100, random.order=F)
+  }
+})
+
+```   
+
+### Appraisal (Responses)
+
+
+
+```{r}
+
+library(Hmisc)
+
+renderTable({
+ data <- Q4D()
+  if(nrow(data)>0){
+    
+    data.frame(Appraisal=data$Explain.Appraisal)
+  }
+
+})
+```
+
